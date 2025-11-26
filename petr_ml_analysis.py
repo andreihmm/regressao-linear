@@ -12,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import matplotlib
-matplotlib.use('Agg') # headless
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
@@ -23,19 +23,16 @@ def read_and_prepare(csv_path, ticker):
     if not csv_path.exists():
         raise FileNotFoundError(f"Arquivo CSV não encontrado: {csv_path}")
 
-    # tenta ler com dayfirst=True (dd/mm/YYYY)
     try:
         df = pd.read_csv(csv_path, parse_dates=['Date'], dayfirst=True)
     except Exception as e:
         raise RuntimeError(f"Erro lendo CSV (parse_dates=['Date'], dayfirst=True): {e}")
 
-    # normalize column names
     df.columns = [c.strip() for c in df.columns]
 
     if 'Ticker' not in df.columns:
         raise KeyError("Coluna 'Ticker' não encontrada no CSV.")
 
-    # filter ticker
     df = df[df['Ticker'] == ticker].copy()
     if df.empty:
         raise ValueError(f"Nenhuma linha encontrada para o ticker '{ticker}' no arquivo {csv_path}.")
@@ -43,7 +40,6 @@ def read_and_prepare(csv_path, ticker):
     df.sort_values('Date', inplace=True)
     df.reset_index(drop=True, inplace=True)
 
-    # ensure numeric
     for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
         df[col] = (
             df[col]
@@ -55,37 +51,29 @@ def read_and_prepare(csv_path, ticker):
 
     df.dropna(subset=['Open', 'High', 'Low', 'Close', 'Volume'], inplace=True)
 
-    # === BASIC FEATURES ===
     df['Return'] = df['Close'].pct_change()
     df['LogReturn'] = np.log(df['Close']).diff()
 
-    # === MOVING AVERAGES & STD ===
     for w in [5, 10, 21, 50]:
         df[f'MA_{w}'] = df['Close'].rolling(window=w).mean()
         df[f'STD_{w}'] = df['Close'].rolling(window=w).std()
 
     df['Volatility_21'] = df['Return'].rolling(window=21).std()
 
-    # === RANGE FEATURES ===
     df['HL_Range'] = (df['High'] - df['Low']) / df['Open']
     df['OC_Range'] = (df['Open'] - df['Close']) / df['Open']
 
-    # Dia da semana
     df['DayOfWeek'] = df['Date'].dt.dayofweek
 
-    # === LAG FEATURES (melhor pra séries temporais) ===
     for lag in [1, 2, 3]:
         df[f'Close_lag{lag}'] = df['Close'].shift(lag)
         df[f'Return_lag{lag}'] = df['Return'].shift(lag)
         df[f'Volume_lag{lag}'] = df['Volume'].shift(lag)
 
-    # === TARGET ===
     df['Target'] = df['Close'].shift(-1)
 
-    # remover última linha (target vazio)
     df = df.iloc[:-1].copy()
 
-    # remover NaNs causados por rolling e lags
     df.dropna(inplace=True)
 
     if len(df) < 10:
@@ -108,7 +96,6 @@ def time_train_test_split(df, train_ratio=0.8):
     if n < 4:
         raise ValueError("Dataset muito pequeno para divisão treino/teste (precisa ter pelo menos 4 linhas).")
     train_end = int(n * train_ratio)
-    # garante pelo menos 2 amostras de teste
     if n - train_end < 2:
         train_end = max(2, n - 2)
     train_df = df.iloc[:train_end].copy()
@@ -119,7 +106,7 @@ def time_train_test_split(df, train_ratio=0.8):
 def evaluate_model(model, X_test, y_test):
     preds = model.predict(X_test)
     mae = mean_absolute_error(y_test, preds)
-    rmse = mean_squared_error(y_test, preds, squared=False)
+    rmse = mean_squared_error(y_test, preds)
     r2 = r2_score(y_test, preds)
     return {'mae': mae, 'rmse': rmse, 'r2': r2}, preds
 
@@ -152,7 +139,6 @@ def generate_report(results, outdir, ticker, df, feature_cols):
 
         f.write("## 3. Resultados do modelo\n\n")
         
-        # Apenas Regressão Linear
         model_name = 'Linear Regression'
         res = results[model_name]
         f.write(f"### {model_name}\n\n")
@@ -185,7 +171,6 @@ def main():
         print("ERRO ao preparar dados:", e)
         sys.exit(1)
 
-    # choose features (recomendo usar a lista filtrada se a arvore falhou antes)
     feature_cols = [
         'Open', 'High', 'Low', 'Volume',
         'Return', 'LogReturn',
@@ -199,20 +184,6 @@ def main():
         'Volume_lag1','Volume_lag2','Volume_lag3'
     ]
 
-    # Para maior robustez (e para evitar o problema anterior):
-    # Considere usar apenas as features de LAG e indicadores no lugar da lista acima, 
-    # pois elas são mais apropriadas para a previsão de séries temporais:
-    # feature_cols = [
-    #     'Close_lag1','Close_lag2','Close_lag3',
-    #     'Return_lag1','Return_lag2','Return_lag3',
-    #     'Volume_lag1','Volume_lag2','Volume_lag3',
-    #     'MA_5','MA_10','MA_21','MA_50',
-    #     'STD_5','STD_10','STD_21','STD_50',
-    #     'Volatility_21',
-    #     'DayOfWeek',
-    # ]
-
-    # ensure features exist in df (in case of small dataset)
     feature_cols = [c for c in feature_cols if c in df.columns]
 
     if len(feature_cols) == 0:
@@ -240,13 +211,11 @@ def main():
 
     results['Linear Regression'] = {'metrics': metrics_lr, 'plot': plot_path_lr.name}
     
-    # 2) Decision Tree logic REMOVED
-
     # save numeric results to CSV
     res_df = pd.DataFrame({
         'Date': test_df['Date'],
         'Actual': y_test,
-        'Pred_LR': preds_lr, # Apenas Regressão Linear
+        'Pred_LR': preds_lr,
     })
     res_df.to_csv(outdir / f'predictions_{args.ticker}.csv', index=False)
 
